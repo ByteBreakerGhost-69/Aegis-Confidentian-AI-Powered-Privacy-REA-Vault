@@ -40,15 +40,15 @@ Aegis-Confidential-AI-Powered-Privacy-REA-Vault/
 │   └── constants/
 │       └── chainlinkConfig.js
 ├── test/
-│   ├── AegisVault.test.js           # Main vault contract tests
-│   ├── AegisAI.test.js              # AI controller tests
-│   ├── RWAToken.test.js             # RWA token tests
+│   ├── AegisVault.test.js           
+│   ├── AegisAI.test.js             
+│   ├── RWAToken.test.js             
 │   ├── integration/
-│   │   ├── chainlink_functions.test.js  # Chainlink Functions integration
-│   │   ├── chainlink_datafeeds.test.js  # Data Feeds integration
-│   │   └── e2e_hackathon.test.js        # End-to-end hackathon demo
+│   │   ├── chainlink_functions.test.js  
+│   │   ├── chainlink_datafeeds.test.js  
+│   │   └── e2e_hackathon.test.js        
 │   └── fixtures/
-│       └── chainlink_mocks.js       # Mock Chainlink contracts
+│       └── chainlink_mocks.js       
 ├── docs/
 │   ├── architecture.md
 │   └── chainlink_integration.md
