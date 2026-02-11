@@ -199,4 +199,62 @@ describe("🏦 RWAToken Contract", function () {
       expect(await token.isCompliant(investor1.address)).to.be.false;
       
       // After whitelisting
-      await token.connect
+      await token.connect(complianceOfficer).whitelistInvestor(investor1.address, "INV001");
+      expect(await token.isCompliant(investor1.address)).to.be.true;
+      
+      // After blacklisting
+      await token.connect(complianceOfficer).blacklistInvestor(investor1.address, "Suspicious");
+      expect(await token.isCompliant(investor1.address)).to.be.false;
+    });
+  });
+
+  describe("🎯 Hackathon Demo Scenarios", function () {
+    it("Should demonstrate full RWA token lifecycle", async function () {
+      console.log("🚀 Starting RWA token demo...");
+      
+      // 1. Compliance officer whitelists investors
+      await token.connect(complianceOfficer).whitelistInvestor(investor1.address, "INV001_HACKATHON");
+      await token.connect(complianceOfficer).whitelistInvestor(investor2.address, "INV002_HACKATHON");
+      console.log("✅ Investors whitelisted with KYC IDs");
+      
+      // 2. Minter issues tokens backed by real assets
+      const assetValue = ethers.parseEther("50000");
+      const proofHash = "ipfs://QmRealEstateDeed123";
+      
+      await token.connect(minter).mint(investor1.address, assetValue, proofHash);
+      console.log(`💰 Minted ${ethers.formatEther(assetValue)} aRWA to ${investor1.address.substring(0, 10)}...`);
+      console.log(`   Asset proof: ${proofHash}`);
+      
+      // 3. Investor transfers tokens
+      const transferAmount = ethers.parseEther("10000");
+      await token.connect(investor1).transfer(investor2.address, transferAmount);
+      console.log(`🔄 Transferred ${ethers.formatEther(transferAmount)} aRWA to investor2`);
+      
+      // 4. Compliance check
+      const isCompliant1 = await token.isCompliant(investor1.address);
+      const isCompliant2 = await token.isCompliant(investor2.address);
+      console.log(`📋 Compliance status: Investor1: ${isCompliant1}, Investor2: ${isCompliant2}`);
+      
+      // 5. Blacklist demonstration
+      await token.connect(complianceOfficer).blacklistInvestor(investor1.address, "Demo: Suspected fraud");
+      console.log("🚫 Investor1 blacklisted - transfers now blocked");
+      
+      // 6. Try transfer from blacklisted (should fail)
+      try {
+        await token.connect(investor1).transfer(investor2.address, ethers.parseEther("100"));
+        console.log("❌ ERROR: Transfer should have failed!");
+      } catch (error) {
+        console.log("✅ Correctly blocked transfer from blacklisted address");
+      }
+      
+      console.log("🎉 RWA token demo completed!");
+      
+      // Final stats
+      console.log("\n📊 Final Statistics:");
+      console.log(`   Total Supply: ${ethers.formatEther(await token.totalSupply())} aRWA`);
+      console.log(`   Max Supply: ${ethers.formatEther(await token.maxSupply())} aRWA`);
+      console.log(`   Investor1 Balance: ${ethers.formatEther(await token.balanceOf(investor1.address))} aRWA`);
+      console.log(`   Investor2 Balance: ${ethers.formatEther(await token.balanceOf(investor2.address))} aRWA`);
+    });
+  });
+});
