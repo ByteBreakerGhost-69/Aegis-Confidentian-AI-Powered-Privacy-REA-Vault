@@ -81,7 +81,8 @@ async function main() {
     const insight = await vault.userInsights(user.address);
     console.log("📦 Stored in Vault:");
     console.log(`   Recommendation: ${insight.recommendation}`);
-    console.log(`   Confidence: ${inset.insight.confidence}`);
+    // GANTI DENGAN:
+    console.log(`   Confidence: ${insight.confidence}`);
     console.log(`   Risk Level: ${["LOW", "MEDIUM", "HIGH"][insight.riskLevel]}`);
 }
 
