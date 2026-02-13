@@ -4,10 +4,10 @@ pragma solidity ^0.8.19;
 import "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
 import "@chainlink/contracts/src/v0.8/ChainlinkClient.sol";
 import "@chainlink/contracts/src/v0.8/ConfirmedOwner.sol";
-import "./libraries/PriceConverter.sol";
-import "./libraries/AegisAccessControl.sol";
-import "./interfaces/IAegisVault.sol";
-import "./interfaces/IRWAToken.sol";
+import "PriceConverter.sol";
+import "AegisAccessControl.sol";
+import "IAegisVault.sol";
+import "IRWAToken.sol";
 
 /**
  * @title AegisVault - AI-Powered Privacy RWA Vault
