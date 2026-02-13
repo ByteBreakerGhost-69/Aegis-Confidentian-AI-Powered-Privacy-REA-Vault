@@ -89,9 +89,11 @@ async function main() {
     // ========== 6. FUND SUBSCRIPTION ==========
     console.log("\n5️⃣ Funding subscription...");
     
-    const fundTx = await functionsRouter.addConsumer(
-        SUBSCRIPTION_ID,
-        amountWei
+    // GANTI DENGAN:
+    const fundTx = await linkToken.transferAndCall(
+        functionsRouter.address,
+        amountWei,
+        hre.ethers.defaultAbiCoder.encode(["uint64"], [SUBSCRIPTION_ID])
     );
     
     await fundTx.wait();
