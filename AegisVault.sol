@@ -1,36 +1,32 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
-import "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
-import "@chainlink/contracts/src/v0.8/ChainlinkClient.sol";
-import "@chainlink/contracts/src/v0.8/ConfirmedOwner.sol";
-import "PriceConverter.sol";
-import "AegisAccessControl.sol";
-import "IAegisVault.sol";
-import "IRWAToken.sol";
+import "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
+import "@chainlink/contracts/src/v0.8/shared/access/ConfirmedOwner.sol";
+import "./libraries/PriceConverter.sol";
+import "./libraries/AegisAccessControl.sol";
+import "./interfaces/IAegisVault.sol";
+import "./interfaces/IRWAToken.sol";
 
 /**
  * @title AegisVault - AI-Powered Privacy RWA Vault
- * @dev Integrates Chainlink Functions for AI insights, Data Feeds for pricing
+ * @dev Integrates Chainlink Data Feeds for pricing
+ * @dev AI Insights via separate FunctionsClient contract
  */
-contract AegisVault is ChainlinkClient, ConfirmedOwner, IAegisVault {
-    using Chainlink for Chainlink.Request;
+contract AegisVault is ConfirmedOwner, IAegisVault {
     using PriceConverter for uint256;
     
-    // Chainlink Data Feed for ETH/USD
-    AggregatorV3Interface private s_priceFeed;
+    // ========== STATE VARIABLES ==========
     
-    // Chainlink Functions
-    bytes32 private s_jobId;
-    uint256 private s_fee;
+    // Chainlink Data Feed
+    AggregatorV3Interface public priceFeed;
     
     // Vault State
     uint256 public totalAssets;
     uint256 public totalShares;
     mapping(address => uint256) public shares;
-    mapping(bytes32 => address) private s_requestIdToUser;
     
-    // AI Insights
+    // AI Insights - received from FunctionsClient
     struct AIInsight {
         uint256 timestamp;
         string recommendation;
@@ -39,72 +35,85 @@ contract AegisVault is ChainlinkClient, ConfirmedOwner, IAegisVault {
     }
     
     enum RiskLevel { LOW, MEDIUM, HIGH }
-    
     mapping(address => AIInsight) public userInsights;
-    mapping(address => bool) public pendingAIRequests;
     
-    // Events
+    // Subscription management
+    mapping(address => bool) public hasActiveSubscription;
+    
+    // FunctionsClient reference
+    address public functionsClient;
+    
+    // Access Control
+    AegisAccessControl public accessControl;
+    
+    // ========== EVENTS ==========
+    
     event Deposit(address indexed user, uint256 assets, uint256 shares);
     event Withdraw(address indexed user, uint256 assets, uint256 shares);
-    event AIRequested(address indexed user, bytes32 requestId);
     event AIReceived(address indexed user, string recommendation, uint256 confidence);
     event EmergencyPaused(address indexed admin, string reason);
+    event FunctionsClientUpdated(address indexed newClient);
+    event SubscriptionGranted(address indexed user);
+    event SubscriptionRevoked(address indexed user);
     
-    // Modifiers
+    // ========== MODIFIERS ==========
+    
     modifier onlyWhenNotPaused() {
-        require(!AegisAccessControl.isPaused(), "Vault is paused");
+        require(!accessControl.isPaused(), "Vault is paused");
         _;
     }
     
-    // ✅ Implementasi sederhana dulu
-    mapping(address => bool) public hasActiveSubscription;
-
-     modifier onlyWithSubscription() {
+    modifier onlyWithSubscription() {
         require(hasActiveSubscription[msg.sender], "No active subscription");
         _;
     }
-
-    // Fungsi untuk admin grant subscription
-    function grantSubscription(address user) external onlyOwner {
-        hasActiveSubscription[user] = true;
+    
+    modifier onlyFunctionsClient() {
+        require(msg.sender == functionsClient, "Only FunctionsClient");
+        _;
     }
     
+    // ========== CONSTRUCTOR ==========
+    
     constructor(
-        address priceFeed,
-        address chainlinkToken,
-        address oracle,
-        bytes32 jobId,
-        uint256 fee
+        address _priceFeed,
+        address _accessControl
     ) ConfirmedOwner(msg.sender) {
-        setChainlinkToken(chainlinkToken);
-        setChainlinkOracle(oracle);
-        s_priceFeed = AggregatorV3Interface(priceFeed);
-        s_jobId = jobId;
-        s_fee = fee;
+        require(_priceFeed != address(0), "Invalid price feed");
+        require(_accessControl != address(0), "Invalid access control");
+        
+        priceFeed = AggregatorV3Interface(_priceFeed);
+        accessControl = AegisAccessControl(_accessControl);
     }
+    
+    // ========== VAULT CORE FUNCTIONS ==========
     
     /**
      * @dev Deposit assets into vault, receive shares
-     * @param rwaToken Address of RWA token to deposit
      */
     function deposit(address rwaToken, uint256 amount) 
         external 
+        override
         onlyWhenNotPaused 
         onlyWithSubscription 
         returns (uint256) 
     {
         require(amount > 0, "Amount must be > 0");
-        require(IRWAToken(rwaToken).transferFrom(msg.sender, address(this), amount), "Transfer failed");
+        require(rwaToken != address(0), "Invalid token address");
         
-        // Calculate shares (simplified 1:1 for demo)
+        // Transfer RWA tokens to vault
+        require(
+            IRWAToken(rwaToken).transferFrom(msg.sender, address(this), amount),
+            "Transfer failed"
+        );
+        
+        // 1:1 share ratio for demo
         uint256 shareAmount = amount;
         
+        // Update state
         shares[msg.sender] += shareAmount;
         totalShares += shareAmount;
         totalAssets += amount;
-        
-        // Trigger AI analysis on deposit
-        _requestAIInsight(msg.sender);
         
         emit Deposit(msg.sender, amount, shareAmount);
         return shareAmount;
@@ -115,80 +124,46 @@ contract AegisVault is ChainlinkClient, ConfirmedOwner, IAegisVault {
      */
     function withdraw(address rwaToken, uint256 shareAmount) 
         external 
+        override
         onlyWhenNotPaused 
         returns (uint256) 
     {
         require(shareAmount > 0, "Shares must be > 0");
         require(shares[msg.sender] >= shareAmount, "Insufficient shares");
+        require(rwaToken != address(0), "Invalid token address");
         
         uint256 assetAmount = shareAmount; // 1:1 for demo
         
+        // Update state
         shares[msg.sender] -= shareAmount;
         totalShares -= shareAmount;
         totalAssets -= assetAmount;
         
-        require(IRWAToken(rwaToken).transfer(msg.sender, assetAmount), "Transfer failed");
+        // Transfer tokens back
+        require(
+            IRWAToken(rwaToken).transfer(msg.sender, assetAmount),
+            "Transfer failed"
+        );
         
         emit Withdraw(msg.sender, assetAmount, shareAmount);
         return assetAmount;
     }
     
-    /**
-     * @dev Request AI insight via Chainlink Functions
-     */
-    function requestAIInsight() external onlyWithSubscription returns (bytes32 requestId) {
-        require(!pendingAIRequests[msg.sender], "Request already pending");
-        
-        Chainlink.Request memory req = buildChainlinkRequest(
-            s_jobId,
-            address(this),
-            this.fulfillAIInsight.selector
-        );
-        
-        // Encode user data for AI analysis
-        string memory userData = string(abi.encodePacked(
-            "{\"user\":\"",
-            _addressToString(msg.sender),
-            "\",\"balance\":\"",
-            _uintToString(shares[msg.sender]),
-            "\",\"timestamp\":\"",
-            _uintToString(block.timestamp),
-            "\"}"
-        ));
-        
-        req.add("data", userData);
-        req.add("path", "recommendation,confidence");
-        
-        // Send request
-        requestId = sendChainlinkRequest(req, s_fee);
-        s_requestIdToUser[requestId] = msg.sender;
-        pendingAIRequests[msg.sender] = true;
-        
-        emit AIRequested(msg.sender, requestId);
-    }
+    // ========== AI INSIGHTS (CALLED BY FUNCTIONS CLIENT) ==========
     
     /**
-     * @dev Chainlink Functions callback
+     * @dev Store AI insight from Chainlink Functions
+     * @notice Only callable by registered FunctionsClient
      */
-    // ✅ Yang BENAR untuk Functions
-    function fulfillRequest(
-        bytes32 requestId,
-        bytes memory response,
-        bytes memory err
-    ) internal override {
-        address user = s_requestIdToUser[requestId];
-    
-        if (err.length > 0) {
-            // Handle error
-            emit AIRequestFailed(user, string(err));
-            return;
-        }
-    
-    // Parse response
-    (string memory recommendation, uint256 confidence) = 
-        abi.decode(response, (string, uint256));
+    function storeAIInsight(
+        address user,
+        string calldata recommendation,
+        uint256 confidence
+    ) external override onlyFunctionsClient {
+        require(user != address(0), "Invalid user");
+        require(bytes(recommendation).length > 0, "Empty recommendation");
+        require(confidence <= 100, "Invalid confidence");
         
-        // Store insight
         userInsights[user] = AIInsight({
             timestamp: block.timestamp,
             recommendation: recommendation,
@@ -196,77 +171,129 @@ contract AegisVault is ChainlinkClient, ConfirmedOwner, IAegisVault {
             riskLevel: _calculateRiskLevel(confidence)
         });
         
-        pendingAIRequests[user] = false;
-        
         emit AIReceived(user, recommendation, confidence);
     }
     
-    /**
-     * @dev Get current ETH value in USD using Chainlink Data Feed
-     */
-    // ✅ TAMBAHKAN validasi lengkap
-    function getAssetValueInUSD(uint256 ethAmount) public view returns (uint256) {
-        require(address(s_priceFeed) != address(0), "Price feed not set");
+    // ========== CHAINLINK DATA FEEDS ==========
     
+    /**
+     * @dev Get asset value in USD with full validation
+     */
+    function getAssetValueInUSD(uint256 ethAmount) 
+        public 
+        view 
+        override
+        returns (uint256) 
+    {
+        require(address(priceFeed) != address(0), "Price feed not set");
+        
         (
             uint80 roundId,
             int256 price,
             ,
             uint256 updatedAt,
             uint80 answeredInRound
-        ) = s_priceFeed.latestRoundData();
+        ) = priceFeed.latestRoundData();
     
         require(price > 0, "Invalid price");
         require(updatedAt >= block.timestamp - 2 hours, "Stale price");
         require(answeredInRound >= roundId, "Round incomplete");
-    
+        require(roundId > 0, "No rounds completed");
+        
         return (ethAmount * uint256(price)) / 1e18;
-}
+    }
+    
+    // ========== SUBSCRIPTION MANAGEMENT ==========
     
     /**
-     * @dev Emergency pause function
+     * @dev Grant subscription to user (admin only)
      */
-    function emergencyPause(string memory reason) external onlyOwner {
-        AegisAccessControl.pause();
+    function grantSubscription(address user) external onlyOwner {
+        require(user != address(0), "Invalid user");
+        hasActiveSubscription[user] = true;
+        emit SubscriptionGranted(user);
+    }
+    
+    /**
+     * @dev Revoke subscription from user (admin only)
+     */
+    function revokeSubscription(address user) external onlyOwner {
+        require(hasActiveSubscription[user], "No active subscription");
+        hasActiveSubscription[user] = false;
+        emit SubscriptionRevoked(user);
+    }
+    
+    /**
+     * @dev Check if user has active subscription
+     */
+    function checkSubscription(address user) external view returns (bool) {
+        return hasActiveSubscription[user];
+    }
+    
+    // ========== FUNCTIONS CLIENT MANAGEMENT ==========
+    
+    /**
+     * @dev Set FunctionsClient contract address
+     */
+    function setFunctionsClient(address _functionsClient) external onlyOwner {
+        require(_functionsClient != address(0), "Invalid address");
+        functionsClient = _functionsClient;
+        emit FunctionsClientUpdated(_functionsClient);
+    }
+    
+    // ========== EMERGENCY CONTROLS ==========
+    
+    /**
+     * @dev Emergency pause (admin only)
+     */
+    function emergencyPause(string calldata reason) external onlyOwner {
+        accessControl.pause();
         emit EmergencyPaused(msg.sender, reason);
     }
     
     /**
-     * @dev Resume operations
+     * @dev Resume operations (admin only)
      */
     function resume() external onlyOwner {
-        AegisAccessControl.resume();
+        accessControl.unpause();
     }
     
     // ========== INTERNAL FUNCTIONS ==========
     
-    function _calculateRiskLevel(uint256 confidence) internal pure returns (RiskLevel) {
+    /**
+     * @dev Calculate risk level based on confidence score
+     */
+    function _calculateRiskLevel(uint256 confidence) 
+        internal 
+        pure 
+        returns (RiskLevel) 
+    {
         if (confidence >= 80) return RiskLevel.LOW;
         if (confidence >= 50) return RiskLevel.MEDIUM;
         return RiskLevel.HIGH;
     }
     
-    function _addressToString(address addr) internal pure returns (string memory) {
-        return Strings.toHexString(uint256(uint160(addr)), 20);
+    // ========== VIEW FUNCTIONS ==========
+    
+    /**
+     * @dev Get user's current insight
+     */
+    function getUserInsight(address user) 
+        external 
+        view 
+        returns (AIInsight memory) 
+    {
+        return userInsights[user];
     }
     
-    function _uintToString(uint256 value) internal pure returns (string memory) {
-        if (value == 0) return "0";
-        
-        uint256 temp = value;
-        uint256 digits;
-        while (temp != 0) {
-            digits++;
-            temp /= 10;
-        }
-        
-        bytes memory buffer = new bytes(digits);
-        while (value != 0) {
-            digits -= 1;
-            buffer[digits] = bytes1(uint8(48 + uint256(value % 10)));
-            value /= 10;
-        }
-        
-        return string(buffer);
+    /**
+     * @dev Get vault statistics
+     */
+    function getVaultStats() external view returns (
+        uint256 _totalAssets,
+        uint256 _totalShares,
+        uint256 _userCount
+    ) {
+        return (totalAssets, totalShares, 0); // userCount optional
     }
 }
