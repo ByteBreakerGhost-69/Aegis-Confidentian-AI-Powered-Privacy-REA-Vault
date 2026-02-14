@@ -1,5 +1,5 @@
 
-# Aeges-Confidentian-AI-Powered-Privacy-REA-Vault
+# Aegis-Confidentian-AI-Powered-Privacy-REA-Vault
 
 ## 📁 Project Structure
 
